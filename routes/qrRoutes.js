@@ -4,17 +4,58 @@ const QRCode = require('../models/QRCode');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
 
+// Simple in-memory cache
+const cache = new Map();
+const CACHE_TTL = 60000; // 1 minute
+
 // Generate unique short ID
 const generateShortId = () => {
   return crypto.randomBytes(6).toString('hex');
 };
 
+// Cache middleware
+const cacheMiddleware = (duration) => {
+  return (req, res, next) => {
+    const key = `__express__${req.originalUrl || req.url}`;
+    const cachedResponse = cache.get(key);
+
+    if (cachedResponse && Date.now() < cachedResponse.expiry) {
+      return res.json(cachedResponse.data);
+    }
+
+    res.originalJson = res.json;
+    res.json = (data) => {
+      cache.set(key, {
+        data,
+        expiry: Date.now() + duration
+      });
+      res.originalJson(data);
+    };
+    next();
+  };
+};
+
+// Clear cache periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of cache.entries()) {
+    if (now > value.expiry) {
+      cache.delete(key);
+    }
+  }
+}, CACHE_TTL);
+
 // @route   POST /api/qr/generate
-// @desc    Generate a new QR code
+// @desc    Generate a new QR code with customization
 // @access  Public
 router.post('/generate', async (req, res) => {
   try {
-    const { originalUrl, createdBy } = req.body;
+    const { 
+      originalUrl, 
+      createdBy,
+      customization = {},
+      logo = null
+    } = req.body;
 
     if (!originalUrl) {
       return res.status(400).json({ error: 'Original URL is required' });
@@ -24,31 +65,69 @@ router.post('/generate', async (req, res) => {
     try {
       new URL(originalUrl);
     } catch (error) {
-      return res.status(400).json({ error: 'Invalid URL format' });
+      return res.status(400).json({ error: 'Invalid URL format. Please include http:// or https://' });
     }
 
     const shortId = generateShortId();
     const trackingUrl = `${process.env.BASE_URL}/track/${shortId}`;
 
-    // Generate QR code image as base64
-    const qrCodeImage = await qrcode.toDataURL(trackingUrl, {
-      width: 400,
-      margin: 2,
-      color: {
-        dark: '#000000',
-        light: '#FFFFFF'
-      }
-    });
+    // Prepare customization options
+    const qrOptions = {
+      dotStyle: customization.dotStyle || 'square',
+      cornerSquareStyle: customization.cornerSquareStyle || 'square',
+      cornerDotStyle: customization.cornerDotStyle || 'square',
+      backgroundColor: customization.backgroundColor || '#FFFFFF',
+      foregroundColor: customization.foregroundColor || '#000000',
+      gradientType: customization.gradientType || 'none',
+      gradientStartColor: customization.gradientStartColor || customization.foregroundColor || '#000000',
+      gradientEndColor: customization.gradientEndColor || customization.foregroundColor || '#000000',
+      logo: logo,
+      logoSize: customization.logoSize || 0.2,
+      size: 800
+    };
+
+    // Generate QR code with customization
+    let qrCodeImage;
+    if (logo || customization.gradientType !== 'none' || customization.dotStyle !== 'square') {
+      const { generateCustomQR } = require('../utils/qrGenerator');
+      qrCodeImage = await generateCustomQR(trackingUrl, qrOptions);
+    } else {
+      // Use simple generation for basic QR codes
+      qrCodeImage = await qrcode.toDataURL(trackingUrl, {
+        width: 400,
+        margin: 2,
+        color: {
+          dark: qrOptions.foregroundColor,
+          light: qrOptions.backgroundColor
+        },
+        errorCorrectionLevel: 'H'
+      });
+    }
 
     const newQR = new QRCode({
       shortId,
       originalUrl,
       trackingUrl,
       qrCodeImage,
+      customization: {
+        dotStyle: qrOptions.dotStyle,
+        cornerSquareStyle: qrOptions.cornerSquareStyle,
+        cornerDotStyle: qrOptions.cornerDotStyle,
+        backgroundColor: qrOptions.backgroundColor,
+        foregroundColor: qrOptions.foregroundColor,
+        gradientType: qrOptions.gradientType,
+        gradientStartColor: qrOptions.gradientStartColor,
+        gradientEndColor: qrOptions.gradientEndColor,
+        hasLogo: !!logo,
+        logoSize: qrOptions.logoSize
+      },
       createdBy: createdBy || 'anonymous'
     });
 
     await newQR.save();
+
+    // Clear list cache
+    cache.clear();
 
     res.status(201).json({
       success: true,
@@ -57,22 +136,29 @@ router.post('/generate', async (req, res) => {
 
   } catch (error) {
     console.error('Generate QR Error:', error);
-    res.status(500).json({ error: 'Server error generating QR code' });
+    res.status(500).json({ 
+      error: 'Server error generating QR code',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
 // @route   GET /api/qr/list
 // @desc    Get all QR codes
 // @access  Public
-router.get('/list', async (req, res) => {
+router.get('/list', cacheMiddleware(30000), async (req, res) => {
   try {
-    const { limit = 50, page = 1, sortBy = 'createdAt', order = 'desc' } = req.query;
+    const { limit = 100, page = 1, sortBy = 'createdAt', order = 'desc' } = req.query;
+
+    const limitNum = Math.min(parseInt(limit), 100); // Max 100 items
+    const pageNum = parseInt(page);
 
     const qrCodes = await QRCode.find({ isActive: true })
       .sort({ [sortBy]: order === 'desc' ? -1 : 1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .select('-scanHistory'); // Don't send full scan history in list
+      .limit(limitNum)
+      .skip((pageNum - 1) * limitNum)
+      .select('-scanHistory') // Don't send full scan history in list
+      .lean(); // Faster queries
 
     const total = await QRCode.countDocuments({ isActive: true });
 
@@ -81,8 +167,9 @@ router.get('/list', async (req, res) => {
       data: qrCodes,
       pagination: {
         total,
-        page: parseInt(page),
-        pages: Math.ceil(total / parseInt(limit))
+        page: pageNum,
+        pages: Math.ceil(total / limitNum),
+        limit: limitNum
       }
     });
 
@@ -100,7 +187,7 @@ router.get('/:id', async (req, res) => {
     const qrCode = await QRCode.findOne({ 
       shortId: req.params.id,
       isActive: true 
-    });
+    }).lean();
 
     if (!qrCode) {
       return res.status(404).json({ error: 'QR code not found' });
@@ -131,6 +218,9 @@ router.delete('/:id', async (req, res) => {
     qrCode.isActive = false;
     await qrCode.save();
 
+    // Clear cache
+    cache.clear();
+
     res.json({
       success: true,
       message: 'QR code deleted successfully'
@@ -150,7 +240,7 @@ router.get('/stats/:id', async (req, res) => {
     const qrCode = await QRCode.findOne({ 
       shortId: req.params.id,
       isActive: true 
-    });
+    }).lean();
 
     if (!qrCode) {
       return res.status(404).json({ error: 'QR code not found' });
@@ -161,12 +251,15 @@ router.get('/stats/:id', async (req, res) => {
       totalScans: qrCode.scans,
       recentScans: qrCode.scanHistory.slice(-10).reverse(),
       scansByDay: {},
-      createdAt: qrCode.createdAt
+      createdAt: qrCode.createdAt,
+      lastScan: qrCode.scanHistory.length > 0 
+        ? qrCode.scanHistory[qrCode.scanHistory.length - 1].timestamp 
+        : null
     };
 
     // Group scans by day
     qrCode.scanHistory.forEach(scan => {
-      const day = scan.timestamp.toISOString().split('T')[0];
+      const day = new Date(scan.timestamp).toISOString().split('T')[0];
       stats.scansByDay[day] = (stats.scansByDay[day] || 0) + 1;
     });
 

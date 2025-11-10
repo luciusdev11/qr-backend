@@ -31,6 +31,48 @@ const qrCodeSchema = new mongoose.Schema({
   qrCodeImage: {
     type: String // Base64 encoded QR code image
   },
+  customization: {
+    dotStyle: {
+      type: String,
+      enum: ['square', 'rounded', 'dots', 'classy', 'classy-rounded'],
+      default: 'square'
+    },
+    cornerSquareStyle: {
+      type: String,
+      enum: ['square', 'rounded', 'extra-rounded', 'dot'],
+      default: 'square'
+    },
+    cornerDotStyle: {
+      type: String,
+      enum: ['square', 'dot'],
+      default: 'square'
+    },
+    backgroundColor: {
+      type: String,
+      default: '#FFFFFF'
+    },
+    foregroundColor: {
+      type: String,
+      default: '#000000'
+    },
+    gradientType: {
+      type: String,
+      enum: ['none', 'linear', 'radial'],
+      default: 'none'
+    },
+    gradientStartColor: String,
+    gradientEndColor: String,
+    hasLogo: {
+      type: Boolean,
+      default: false
+    },
+    logoSize: {
+      type: Number,
+      default: 0.2,
+      min: 0.1,
+      max: 0.4
+    }
+  },
   scans: {
     type: Number,
     default: 0
@@ -45,7 +87,7 @@ const qrCodeSchema = new mongoose.Schema({
     default: 'anonymous'
   }
 }, {
-  timestamps: true // Adds createdAt and updatedAt
+  timestamps: true
 });
 
 // Index for faster queries

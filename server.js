@@ -12,26 +12,31 @@ const app = express();
 // Connect to MongoDB
 connectDB();
 
+// Trust proxy - Important for Render
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(cors({
   origin: [
     'http://localhost:3000',
     process.env.FRONTEND_URL,
-    // Allow any origin from your local network
-    /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:\d+$/,
-    /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$/
+    /\.vercel\.app$/,  // Allow all Vercel domains
   ],
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb'}));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Request logging
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
-  next();
-});
+// Request logging (only in development)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.path}`);
+    next();
+  });
+}
 
 // Routes
 app.use('/api/qr', qrRoutes);
@@ -42,7 +47,8 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime()
   });
 });
 
@@ -51,6 +57,7 @@ app.get('/', (req, res) => {
   res.json({
     message: 'QR Code Tracker API',
     version: '1.0.0',
+    status: 'running',
     endpoints: {
       health: '/api/health',
       generateQR: 'POST /api/qr/generate',
@@ -59,21 +66,26 @@ app.get('/', (req, res) => {
       deleteQR: 'DELETE /api/qr/:id',
       stats: 'GET /api/qr/stats/:id',
       track: 'GET /track/:shortId'
-    }
+    },
+    documentation: 'https://github.com/luciusdev11'
   });
 });
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({ 
+    error: 'Route not found',
+    path: req.path,
+    method: req.method
+  });
 });
 
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Server Error:', err);
-  res.status(500).json({ 
+  res.status(err.status || 500).json({ 
     error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
 });
 
@@ -81,12 +93,26 @@ const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`
-  🚀 Server is running!
+  ╔════════════════════════════════════════╗
+   ║  🚀 QR Tracker API Server Running    ║
+  ╚════════════════════════════════════════╝
   📍 Port: ${PORT}
   🌍 Environment: ${process.env.NODE_ENV || 'development'}
-  🔗 API: http://localhost:${PORT}
-  📊 Health Check: http://localhost:${PORT}/api/health
+  🔗 Local: http://localhost:${PORT}
+  🌐 Network: ${process.env.BASE_URL || 'Not set'}
+  📊 Health: ${process.env.BASE_URL || 'http://localhost:' + PORT}/api/health
+
+  ${process.env.NODE_ENV === 'production' ? '✅ Production Mode' : '⚠️  Development Mode'}
   `);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Closing server gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
 
 module.exports = app;
