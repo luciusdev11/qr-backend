@@ -3,6 +3,7 @@ const router = express.Router();
 const QRCode = require('../models/QRCode');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
+const { authenticateUser } = require('../middleware/auth');
 
 // Simple in-memory cache
 const cache = new Map();
