@@ -130,7 +130,7 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`
   ╔════════════════════════════════════════╗
-  ║   🚀 QR Tracker API v1.0.1            ║
+  ║   🚀 QR Tracker API v1.0.2            ║
   ╚════════════════════════════════════════╝
   
   📍 Port: ${PORT}
