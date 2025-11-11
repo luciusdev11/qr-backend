@@ -41,7 +41,7 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production', // HTTPS only in production
     httpOnly: true,
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxAge: 30 * 60 * 1000, // 30 minutes (shorter for security)
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
 }));
@@ -130,7 +130,7 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`
   ╔════════════════════════════════════════╗
-  ║   🚀 QR Tracker API v1.0.2            ║
+  ║   🚀 QR Tracker API v1.0.2b            ║
   ╚════════════════════════════════════════╝
   
   📍 Port: ${PORT}
@@ -153,4 +153,4 @@ process.on('SIGTERM', () => {
   });
 });
 
-module.exports = app;
+module.exports = app
